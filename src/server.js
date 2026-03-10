@@ -15,6 +15,7 @@ import financeRoutes from "./routes/financeRoutes.js";
 import portfolioRoutes from "./routes/portfolioRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import leaveRoutes from "./routes/leaveRoutes.js";
+
 import { ensureDefaultRoles } from "./utils/ensureRoles.js";
 import { ensureEmployeeIds } from "./utils/ensureEmployeeIds.js";
 import { startAttendanceScheduler } from "./utils/attendanceScheduler.js";
@@ -23,9 +24,11 @@ const app = express();
 
 app.use(express.json());
 
+app.set("trust proxy", 1);
+
 app.use(
   cors({
-    origin: "https://xiro-fe.vercel.app/",
+    origin: "https://xiro-fe.vercel.app",
     credentials: true,
   })
 );
@@ -46,12 +49,15 @@ const startServer = async () => {
   app.use("/api", portfolioRoutes);
   app.use("/api", dashboardRoutes);
   app.use("/api", leaveRoutes);
+
   app.get("/", (req, res) => {
     res.json({ message: "API running 🚀" });
   });
 
-  const PORT = 4000;
+  const PORT = process.env.PORT;
+
   app.listen(PORT, () => {
+    console.log(`Server running on ${PORT}`);
   });
 };
 
