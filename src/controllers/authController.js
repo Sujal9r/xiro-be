@@ -87,8 +87,13 @@ export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    if (!user || !(await user.matchPassword(password)))
-      return res.status(401).json({ message: "Invalid credentials" });
+    if (!user) {
+      return res.status(401).json({ message: "Email is incorrect." });
+    }
+
+    if (!(await user.matchPassword(password))) {
+      return res.status(401).json({ message: "Password is incorrect." });
+    }
 
     if (!user.isActive) {
       return res.status(403).json({ message: "Account is disabled" });

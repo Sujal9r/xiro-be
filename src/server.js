@@ -26,9 +26,21 @@ app.use(express.json());
 
 app.set("trust proxy", 1);
 
+const allowedOrigins = [
+  "https://xiro-fe.vercel.app",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: "https://xiro-fe.vercel.app",
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
   })
 );
