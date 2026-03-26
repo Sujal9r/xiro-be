@@ -76,6 +76,11 @@ const userSchema = new mongoose.Schema(
         trim: true,
       },
     },
+    wfhBaseLocation: {
+      latitude: { type: Number, default: null },
+      longitude: { type: Number, default: null },
+      radius: { type: Number, default: 100 },
+    },
     isActive: {
       type: Boolean,
       default: true,

@@ -70,6 +70,23 @@ const distanceBetween = (lat1, lng1, lat2, lng2) => {
 const isValidCoordinate = (value, min, max) =>
   Number.isFinite(value) && value >= min && value <= max;
 
+// Helper function to check if employee is on leave on a given date
+const isEmployeeOnLeave = async (userId, date) => {
+  const dayStart = new Date(date);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(date);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  const leave = await LeaveRequest.findOne({
+    employee: userId,
+    status: "approved",
+    fromDate: { $lte: dayEnd },
+    toDate: { $gte: dayStart },
+  });
+
+  return !!leave;
+};
+
 const getOrCreateGeofence = async () => {
   let setting = await GeofenceSetting.findOne({ key: "default" });
   if (!setting) {
@@ -155,7 +172,6 @@ const assertWithinGeofence = async (req, { enforceClockOut = false } = {}) => {
 
 export const clockIn = async (req, res) => {
   try {
-    const geoCheck = await assertWithinGeofence(req, { enforceClockOut: false });
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -163,25 +179,19 @@ export const clockIn = async (req, res) => {
       return res.status(403).json({ message: "Account is disabled" });
     }
 
-    const lastOpen = await AttendanceLog.findOne({
-      user: user._id,
-      checkOut: { $exists: false },
-    }).sort({ checkIn: -1 });
-
-    if (lastOpen) {
-      const autoClosed = await autoClockOutIfNeeded(lastOpen);
-      if (autoClosed) {
-        await lastOpen.save();
-      } else {
-        return res.status(400).json({ message: "Already clocked in" });
-      }
+    const now = new Date();
+    
+    // Check if employee is on leave today
+    const isOnLeave = await isEmployeeOnLeave(user._id, now);
+    if (isOnLeave) {
+      return res.status(400).json({ 
+        message: "You are on leave today. No attendance tracking required.",
+        onLeave: true 
+      });
     }
 
-    const now = new Date();
-    const shift = resolveShift(user);
-    const lateMinutes = Math.max(0, getDayMinutes(now) - shift.startMinutes);
-    const isLate = lateMinutes > 0;
-    const hasPenalty = lateMinutes > PENALTY_LATE_MINUTES;
+    const geoCheck = await assertWithinGeofence(req, { enforceClockOut: false });
+    
     const startOfDay = new Date(now);
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(now);
@@ -265,11 +275,21 @@ export const clockIn = async (req, res) => {
 
 export const clockOut = async (req, res) => {
   try {
-    const geoCheck = await assertWithinGeofence(req, { enforceClockOut: true });
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const now = new Date();
+    
+    // Check if employee is on leave today
+    const isOnLeave = await isEmployeeOnLeave(user._id, now);
+    if (isOnLeave) {
+      return res.status(400).json({ 
+        message: "You are on leave today. No attendance tracking required.",
+        onLeave: true 
+      });
+    }
+
+    const geoCheck = await assertWithinGeofence(req, { enforceClockOut: true });
     const shift = resolveShift(user);
     const isEarlyClockOut = getDayMinutes(now) < shift.endMinutes;
     const startOfDay = new Date(now);
@@ -675,6 +695,212 @@ export const reviewRegularizationRequest = async (req, res) => {
     return res.json({ message: "Regularization rejected", request });
   } catch (error) {
     res.status(500).json({ message: "Failed to review regularization request" });
+  }
+};
+
+// ===== AUTO CLOCK IN/OUT FOR WFH GEOFENCE =====
+export const handleWFHGeofenceEvent = async (req, res) => {
+  try {
+    const { latitude, longitude, eventType, force } = req.body; // eventType: "enter" or "exit"
+    if (!eventType) {
+      return res.status(400).json({ message: "Invalid geofence event data" });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Allow WFH attendance against a same-day pending or approved WFH request.
+    const wfhLeave = await LeaveRequest.findOne({
+      employee: user._id,
+      status: { $ne: "cancelled" },
+      typeKey: "wfh",
+      fromDate: { $lte: endOfDay },
+      toDate: { $gte: startOfDay },
+    }).sort({ createdAt: -1 });
+
+    if (!wfhLeave) {
+      return res.status(400).json({ message: "No WFH request found for today" });
+    }
+
+    // Check if within WFH geofence
+    if (!wfhLeave.geofenceLocation?.latitude) {
+      return res.status(400).json({ message: "WFH geofence not set for this leave" });
+    }
+
+    const effectiveLatitude = Number.isFinite(latitude)
+      ? latitude
+      : wfhLeave.geofenceLocation.latitude;
+    const effectiveLongitude = Number.isFinite(longitude)
+      ? longitude
+      : wfhLeave.geofenceLocation.longitude;
+
+    const distanceFromHome = distanceBetween(
+      effectiveLatitude,
+      effectiveLongitude,
+      wfhLeave.geofenceLocation.latitude,
+      wfhLeave.geofenceLocation.longitude,
+    );
+
+    const geofenceRadius = wfhLeave.geofenceLocation.radius || 100;
+    const isWithinGeofence = distanceFromHome <= geofenceRadius;
+
+    // Get or create today's attendance log
+    let todayLog = await AttendanceLog.findOne({
+      user: user._id,
+      $or: [
+        { date: { $gte: startOfDay, $lte: endOfDay } },
+        { checkIn: { $gte: startOfDay, $lte: endOfDay } },
+      ],
+    }).sort({ checkIn: -1 });
+
+    const shift = resolveShift(user);
+
+    if (eventType === "enter") {
+      // WFH users can clock in from any location once WFH is active.
+      if (!todayLog || todayLog.checkOut) {
+        // Create or add new session
+        const lateMinutes = Math.max(0, getDayMinutes(now) - shift.startMinutes);
+        const hasPenalty = false; // No penalty for WFH
+        const isLate = lateMinutes > 0;
+
+        if (todayLog && todayLog.checkOut) {
+          // Add new session
+          if (!Array.isArray(todayLog.sessions)) todayLog.sessions = [];
+          todayLog.sessions.push({
+            checkIn: now,
+            shiftStartTime: shift.startTime,
+            shiftEndTime: shift.endTime,
+            isLate,
+            lateMinutes,
+            hasPenalty,
+            autoClocked: true,
+          });
+          todayLog.checkOut = undefined;
+          todayLog.isLate = isLate;
+          todayLog.lateMinutes = lateMinutes;
+          todayLog.hasPenalty = hasPenalty;
+          await todayLog.save();
+        } else {
+          // Create new log
+          todayLog = await AttendanceLog.create({
+            user: user._id,
+            date: startOfDay,
+            checkIn: now,
+            shiftStartTime: shift.startTime,
+            shiftEndTime: shift.endTime,
+            isLate,
+            lateMinutes,
+            hasPenalty,
+            sessions: [
+              {
+                checkIn: now,
+                shiftStartTime: shift.startTime,
+                shiftEndTime: shift.endTime,
+                isLate,
+                lateMinutes,
+                hasPenalty,
+                autoClocked: true,
+              },
+            ],
+          });
+        }
+
+        return res.json({
+          message: "Clocked in (WFH)",
+          attendanceLog: todayLog,
+          geofenceDistance: distanceFromHome,
+          isWithinGeofence,
+        });
+      }
+
+      return res.json({
+        message: "Already clocked in",
+        attendanceLog: todayLog,
+        geofenceDistance: distanceFromHome,
+        isWithinGeofence,
+      });
+    }
+
+    if (eventType === "exit") {
+      // WFH users can clock out from any location once WFH is active.
+      if (todayLog && !todayLog.checkOut) {
+        const ensureSessions = (log) => {
+          if (!Array.isArray(log.sessions) || log.sessions.length === 0) {
+            if (log.checkIn) {
+              log.sessions = [
+                {
+                  checkIn: log.checkIn,
+                  checkOut: log.checkOut,
+                  duration: log.duration,
+                },
+              ];
+            }
+          }
+        };
+
+        ensureSessions(todayLog);
+        const openSession = [...(todayLog.sessions || [])].reverse().find((s) => !s.checkOut);
+
+        if (openSession) {
+          openSession.checkOut = now;
+          openSession.autoClocked = true;
+          openSession.duration = Math.max(
+            0,
+            Math.floor((now - new Date(openSession.checkIn)) / (1000 * 60)),
+          );
+
+          const totalMinutes = (todayLog.sessions || []).reduce((sum, session) => {
+            if (session.duration) return sum + session.duration;
+            if (session.checkIn && session.checkOut) {
+              return (
+                sum +
+                Math.max(
+                  0,
+                  Math.floor(
+                    (new Date(session.checkOut) - new Date(session.checkIn)) / (1000 * 60),
+                  ),
+                )
+              );
+            }
+            return sum;
+          }, 0);
+
+          todayLog.duration = totalMinutes;
+          todayLog.checkOut = now;
+          if (!todayLog.date) todayLog.date = startOfDay;
+          await todayLog.save();
+
+          return res.json({
+            message: "Clocked out (WFH)",
+            attendanceLog: todayLog,
+            geofenceDistance: distanceFromHome,
+            isWithinGeofence,
+          });
+        }
+      }
+
+      return res.json({
+        message: "Not currently clocked in",
+        geofenceDistance: distanceFromHome,
+        isWithinGeofence,
+      });
+    }
+
+    return res.json({
+      message: "Geofence event processed",
+      eventType,
+      isWithinGeofence,
+      geofenceDistance: distanceFromHome,
+    });
+  } catch (error) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ message: error.message || "Failed to process geofence event" });
   }
 };
 

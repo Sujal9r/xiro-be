@@ -14,6 +14,7 @@ import {
   getGeofenceConfig,
   getMyRegularizationRequests,
   reviewRegularizationRequest,
+  handleWFHGeofenceEvent,
 } from "../controllers/attendanceController.js";
 
 const router = express.Router();
@@ -75,6 +76,13 @@ router.post(
   protect,
   authorizePermissions(PERMISSIONS.ATTENDANCE_REGULARIZATION_REVIEW),
   reviewRegularizationRequest,
+);
+
+router.post(
+  "/attendance/wfh-geofence-event",
+  protect,
+  authorizePermissions(PERMISSIONS.ATTENDANCE_CLOCK),
+  handleWFHGeofenceEvent,
 );
 
 export default router;

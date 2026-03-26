@@ -24,6 +24,11 @@ export const getDashboard = async (req, res) => {
         role: req.user.role,
         createdAt: req.user.createdAt,
         shift: req.user.shift || { startTime: "", endTime: "" },
+        wfhBaseLocation: req.user.wfhBaseLocation || {
+          latitude: null,
+          longitude: null,
+          radius: 100,
+        },
       },
       permissions,
     };
@@ -112,7 +117,7 @@ export const getDashboard = async (req, res) => {
       const canRequestRegularization = permissions.includes(
         PERMISSIONS.ATTENDANCE_REGULARIZATION_REQUEST,
       );
-      const [tickets, attendanceLogs, approvedLeaves, myRegularizationRequests, regularizationBalance] =
+      const [tickets, attendanceLogs, approvedLeaves, activeWFHRequests, myRegularizationRequests, regularizationBalance] =
         await Promise.all([
         permissions.includes(PERMISSIONS.VIEW_USER_TASKS)
           ? Ticket.find({ assignedTo: req.user._id })
@@ -125,9 +130,18 @@ export const getDashboard = async (req, res) => {
           status: "approved",
         })
           .select(
-            "fromDate toDate totalDays halfDay leaveUnit halfDaySession partialMinutes partialDayPosition typeName",
+            "fromDate toDate totalDays halfDay leaveUnit halfDaySession partialMinutes partialDayPosition typeName typeKey geofenceLocation status",
           )
           .sort({ fromDate: -1 }),
+        LeaveRequest.find({
+          employee: req.user._id,
+          typeKey: "wfh",
+          status: { $ne: "cancelled" },
+        })
+          .select(
+            "fromDate toDate totalDays halfDay leaveUnit halfDaySession partialMinutes partialDayPosition typeName typeKey geofenceLocation status",
+          )
+          .sort({ fromDate: -1, createdAt: -1 }),
         canRequestRegularization
           ? RegularizationRequest.find({ user: req.user._id })
               .sort({ createdAt: -1 })
@@ -152,6 +166,7 @@ export const getDashboard = async (req, res) => {
         tickets,
         attendanceLogs,
         approvedLeaves,
+        activeWFHRequests,
         regularizationBalance,
         regularizationRequests: myRegularizationRequests,
       };

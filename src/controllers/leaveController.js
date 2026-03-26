@@ -86,6 +86,14 @@ const getUsedDays = async (employeeId, typeKey, periodStart) => {
   return approved.reduce((sum, req) => sum + (req.totalDays || 0), 0);
 };
 
+const findOverlappingLeaveRequest = async (employeeId, fromDate, toDate) =>
+  LeaveRequest.findOne({
+    employee: employeeId,
+    status: { $in: ["pending", "approved"] },
+    fromDate: { $lte: toDate },
+    toDate: { $gte: fromDate },
+  }).select("typeName status fromDate toDate");
+
 export const getLeavePolicy = async (req, res) => {
   try {
     const policy = await ensurePolicy();
@@ -136,6 +144,11 @@ export const applyLeave = async (req, res) => {
       reason,
       attachmentUrl,
     } = req.body;
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     const normalizedFromDate = fromDate ? new Date(fromDate) : null;
     const normalizedToDate = toDate ? new Date(toDate) : normalizedFromDate;
@@ -245,8 +258,65 @@ export const applyLeave = async (req, res) => {
       }
     }
 
+    const overlappingRequest = await findOverlappingLeaveRequest(
+      req.user._id,
+      normalizedFromDateValue,
+      normalizedToDateValue,
+    );
+    if (overlappingRequest) {
+      return res.status(400).json({
+        message: `A ${overlappingRequest.typeName} request already exists for the selected date range.`,
+      });
+    }
+
+    // For Work From Home, capture geofence location
+    let geofenceLocation = {};
+    if (typeKey === "wfh") {
+      const latitude = Number(req.body.latitude);
+      const longitude = Number(req.body.longitude);
+      const hasSubmittedCoords =
+        Number.isFinite(latitude) &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        Number.isFinite(longitude) &&
+        longitude >= -180 &&
+        longitude <= 180;
+      const hasSavedLocation =
+        Number.isFinite(user.wfhBaseLocation?.latitude) &&
+        Number.isFinite(user.wfhBaseLocation?.longitude);
+
+      if (!hasSavedLocation && !hasSubmittedCoords) {
+        return res.status(400).json({
+          message: "Set your WFH location once before applying for Work From Home.",
+        });
+      }
+
+      if (!hasSavedLocation && hasSubmittedCoords) {
+        user.wfhBaseLocation = {
+          latitude,
+          longitude,
+          radius: 100,
+        };
+        await user.save();
+      }
+
+      if (hasSavedLocation) {
+        geofenceLocation = {
+          latitude: user.wfhBaseLocation.latitude,
+          longitude: user.wfhBaseLocation.longitude,
+          radius: user.wfhBaseLocation.radius || 100,
+        };
+      } else if (hasSubmittedCoords) {
+        geofenceLocation = {
+          latitude,
+          longitude,
+          radius: 100,
+        };
+      }
+    }
+
     const request = await LeaveRequest.create({
-      employee: req.user._id,
+      employee: user._id,
       typeKey: isPartialDayFreeType ? "partial_day" : typeKey,
       typeName: isPartialDayFreeType ? "Partial Day" : leaveType.name,
       fromDate: normalizedFromDateValue,
@@ -259,6 +329,7 @@ export const applyLeave = async (req, res) => {
       reason: reason || "",
       attachmentUrl: attachmentUrl || "",
       totalDays,
+      geofenceLocation: Object.keys(geofenceLocation).length > 0 ? geofenceLocation : undefined,
     });
 
     res.status(201).json(request);
@@ -368,10 +439,25 @@ export const approveLeave = async (req, res) => {
     if (request.status !== "pending") {
       return res.status(400).json({ message: "Leave request already processed" });
     }
+
     request.status = "approved";
     request.remarks = req.body.remarks || "";
     request.decidedBy = req.user._id;
     request.decidedAt = new Date();
+
+    // Auto-waive penalty for certain leave types
+    const penaltyWaiverTypes = ["sick", "paid", "wfh"];
+    if (penaltyWaiverTypes.includes(request.typeKey)) {
+      request.penaltyWaived = true;
+      request.waivedBy = req.user._id;
+      request.waivedAt = new Date();
+    }
+
+    // Store geofence location for WFH leaves
+    if (request.typeKey === "wfh" && request.geofenceLocation?.latitude) {
+      // Geofence location already captured during leave application
+    }
+
     await request.save();
     res.json(request);
   } catch (error) {
@@ -514,5 +600,38 @@ export const exportMonthlyReport = async (req, res) => {
     res.send(buffer);
   } catch (error) {
     res.status(500).json({ message: "Failed to export report" });
+  }
+};
+
+// ===== PENALTY WAIVER MANAGEMENT =====
+export const waiverPenaltyForLeave = async (req, res) => {
+  try {
+    const { leaveId } = req.params;
+    const { remarks } = req.body;
+
+    const leave = await LeaveRequest.findById(leaveId);
+    if (!leave) {
+      return res.status(404).json({ message: "Leave request not found" });
+    }
+
+    if (leave.status !== "approved") {
+      return res.status(400).json({ message: "Only approved leaves can have penalty waived" });
+    }
+
+    leave.penaltyWaived = true;
+    leave.waivedBy = req.user._id;
+    leave.waivedAt = new Date();
+    if (remarks) leave.remarks = remarks.toString().trim();
+
+    await leave.save();
+
+    res.json({
+      message: "Penalty waived for this leave",
+      penaltyWaived: true,
+      waivedBy: req.user._id,
+      waivedAt: leave.waivedAt,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to waive penalty" });
   }
 };

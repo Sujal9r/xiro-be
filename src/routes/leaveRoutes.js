@@ -16,6 +16,7 @@ import {
   getMonthlyReport,
   getEmployeeSummary,
   exportMonthlyReport,
+  waiverPenaltyForLeave,
 } from "../controllers/leaveController.js";
 
 const router = express.Router();
@@ -59,6 +60,11 @@ router.put(
   "/leaves/requests/:id/reject",
   authorizePermissions(PERMISSIONS.LEAVE_REQUESTS_REJECT),
   rejectLeave,
+);
+router.put(
+  "/leaves/requests/:leaveId/waive-penalty",
+  authorizePermissions(PERMISSIONS.LEAVE_PENALTY_WAIVER),
+  waiverPenaltyForLeave,
 );
 router.get(
   "/leaves/calendar",

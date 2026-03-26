@@ -20,6 +20,7 @@ export const PERMISSIONS = {
   LEAVE_POLICY_MANAGE: "leave.policy.manage",
   LEAVE_REPORTS_VIEW: "leave.reports.view",
   LEAVE_REPORTS_EXPORT: "leave.reports.export",
+  LEAVE_PENALTY_WAIVER: "leave.penalty.waiver",
   VIEW_EMPLOYEES: "view.employees",
   VIEW_EMPLOYEE_STATUS: "view.employees.status",
   CREATE_EMPLOYEE: "create.employees",
@@ -43,6 +44,16 @@ export const PERMISSIONS = {
   ATTENDANCE_CLOCK: "attendance.clock",
   ATTENDANCE_REGULARIZATION_REQUEST: "attendance.regularization.request",
   ATTENDANCE_REGULARIZATION_REVIEW: "attendance.regularization.review",
+  // Tax Management Permissions
+  FINANCE_TAX_VIEW: "finance.tax.view",
+  FINANCE_TAX_ADD: "finance.tax.add",
+  FINANCE_TAX_EDIT: "finance.tax.edit",
+  FINANCE_TAX_DELETE: "finance.tax.delete",
+  FINANCE_TAX_TYPE_MANAGE: "finance.tax.type.manage",
+  FINANCE_PAYROLL_VIEW_MONTHLY: "finance.payroll.view.monthly",
+  FINANCE_PAYROLL_VIEW_ANNUAL: "finance.payroll.view.annual",
+  FINANCE_PAYROLL_EDIT: "finance.payroll.edit",
+  FINANCE_PAYSLIP_GENERATE: "finance.payslip.generate",
 };
 
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);

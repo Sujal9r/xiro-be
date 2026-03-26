@@ -35,12 +35,23 @@ const leaveRequestSchema = new mongoose.Schema(
     remarks: { type: String, default: "" },
     decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     decidedAt: { type: Date },
+    // Geofence for WFH leaves - captured at time of approval
+    geofenceLocation: {
+      latitude: { type: Number, default: null },
+      longitude: { type: Number, default: null },
+      radius: { type: Number, default: 100 }, // 100 meters for WFH
+    },
+    // Track if penalty is auto-waived for this leave
+    penaltyWaived: { type: Boolean, default: false },
+    waivedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    waivedAt: { type: Date },
   },
   { timestamps: true },
 );
 
 leaveRequestSchema.index({ employee: 1, fromDate: -1 });
 leaveRequestSchema.index({ status: 1, fromDate: -1 });
+leaveRequestSchema.index({ employee: 1, status: 1, fromDate: 1 });
 
 const LeaveRequest = mongoose.model("LeaveRequest", leaveRequestSchema);
 export default LeaveRequest;
