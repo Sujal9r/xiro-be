@@ -87,6 +87,22 @@ const userSchema = new mongoose.Schema(
     },
     resetToken: String,
     resetTokenExpire: Date,
+    passwordResetOtpHash: {
+      type: String,
+      default: "",
+    },
+    passwordResetOtpExpire: {
+      type: Date,
+      default: null,
+    },
+    passwordResetSessionHash: {
+      type: String,
+      default: "",
+    },
+    passwordResetSessionExpire: {
+      type: Date,
+      default: null,
+    },
     attendanceLogs: [
       {
         checkIn: { type: Date, required: true },

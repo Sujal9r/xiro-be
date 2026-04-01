@@ -7,14 +7,18 @@ const serializeRole = (roleDoc) => ({
   key: roleDoc.key,
   name: roleDoc.name,
   permissions: roleDoc.permissions || [],
-  isSystem: false,
+  isSystem: !!roleDoc.isSystem,
 });
 
 export const listRoles = async (req, res) => {
   try {
     const customRoles = await Role.find().sort({ createdAt: -1 });
+    const roles = customRoles
+      .filter((roleDoc) => req.user?.role === "superadmin" || roleDoc.key !== "superadmin")
+      .map(serializeRole);
+
     res.json({
-      roles: customRoles.map(serializeRole),
+      roles,
       availablePermissions: ALL_PERMISSIONS,
     });
   } catch (error) {
@@ -73,6 +77,9 @@ export const updateRole = async (req, res) => {
     }
 
     const { name, permissions } = req.body;
+    if (role.isSystem && req.user?.role !== "superadmin") {
+      return res.status(403).json({ message: "Only Super Admin can edit system roles" });
+    }
     if (name && name.toString().trim()) {
       role.name = name.toString().trim();
     }
@@ -99,6 +106,9 @@ export const deleteRole = async (req, res) => {
     const role = await Role.findById(roleId);
     if (!role) {
       return res.status(404).json({ message: "Role not found" });
+    }
+    if (role.isSystem) {
+      return res.status(400).json({ message: "System roles cannot be deleted" });
     }
 
     const assignedUser = await User.findOne({ customRole: role._id }).select("_id");

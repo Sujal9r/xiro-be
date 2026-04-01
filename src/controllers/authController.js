@@ -8,6 +8,42 @@ import Role from "../models/Role.js";
 import AttendanceLog from "../models/AttendanceLog.js";
 import { autoClockOutIfNeeded } from "../utils/attendance.js";
 
+const OTP_VALIDITY_MS = 10 * 60 * 1000;
+const RESET_SESSION_VALIDITY_MS = 15 * 60 * 1000;
+
+const normalizeEmail = (value = "") => value.toString().trim().toLowerCase();
+const generateOtp = () => `${Math.floor(100000 + Math.random() * 900000)}`;
+const hashValue = (value = "") => crypto.createHash("sha256").update(value).digest("hex");
+const createResetSessionToken = () => crypto.randomBytes(32).toString("hex");
+const getPasswordResetTransporter = () =>
+  nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+  });
+
+const buildOtpEmailHtml = ({ name, otp }) => `
+  <div style="margin:0;padding:32px;background:#eef4ff;font-family:Arial,sans-serif;color:#0f172a;">
+    <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:24px;overflow:hidden;border:1px solid #dbeafe;box-shadow:0 18px 45px rgba(15,23,42,0.08);">
+      <div style="padding:28px 32px;background:linear-gradient(135deg,#0f172a 0%,#1d4ed8 100%);color:#ffffff;">
+        <div style="font-size:24px;font-weight:700;letter-spacing:0.04em;">Xiro</div>
+        <div style="margin-top:10px;font-size:14px;opacity:0.82;">Password reset verification</div>
+      </div>
+      <div style="padding:32px;">
+        <p style="margin:0 0 14px;font-size:16px;">Hi ${name || "there"},</p>
+        <p style="margin:0 0 20px;font-size:15px;line-height:1.7;color:#475569;">
+          We received a request to reset your Xiro password. Use the verification code below to continue.
+        </p>
+        <div style="margin:24px 0;padding:18px 20px;border-radius:18px;background:#eff6ff;border:1px solid #bfdbfe;text-align:center;">
+          <div style="font-size:13px;color:#1d4ed8;letter-spacing:0.18em;text-transform:uppercase;">One-time password</div>
+          <div style="margin-top:10px;font-size:34px;font-weight:700;letter-spacing:0.42em;color:#0f172a;">${otp}</div>
+        </div>
+        <p style="margin:0 0 10px;font-size:14px;color:#475569;">This code will expire in 10 minutes.</p>
+        <p style="margin:0;font-size:14px;color:#475569;">If you did not request this reset, you can safely ignore this email.</p>
+      </div>
+    </div>
+  </div>
+`;
+
 // SIGNUP
 export const signup = async (req, res) => {
   try {
@@ -125,55 +161,120 @@ export const login = async (req, res) => {
 // FORGOT PASSWORD
 export const forgotPassword = async (req, res) => {
   try {
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const email = normalizeEmail(req.body.email);
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
 
-    const resetToken = crypto.randomBytes(20).toString("hex");
-    user.resetToken = resetToken;
-    user.resetTokenExpire = Date.now() + 15 * 60 * 1000;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "No account found for this email" });
+    }
+
+    const otp = generateOtp();
+    user.passwordResetOtpHash = hashValue(otp);
+    user.passwordResetOtpExpire = new Date(Date.now() + OTP_VALIDITY_MS);
+    user.passwordResetSessionHash = "";
+    user.passwordResetSessionExpire = null;
+    user.resetToken = undefined;
+    user.resetTokenExpire = undefined;
     await user.save();
 
-    const resetURL = `http://localhost:3000/reset-password/${resetToken}`;
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    });
+    const transporter = getPasswordResetTransporter();
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: user.email,
-      subject: "Password Reset Request",
-      text: `Click here to reset your password: ${resetURL}`,
+      subject: "Xiro password reset OTP",
+      text: `Your Xiro password reset OTP is ${otp}. It will expire in 10 minutes.`,
+      html: buildOtpEmailHtml({ name: user.firstName || user.name, otp }),
     });
 
-    res.json({ message: "Password reset link sent to email" });
+    res.json({
+      message: "We sent a 6-digit OTP to your email. Enter it to continue.",
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
 };
 
-// RESET PASSWORD (using reset token from email)
-export const resetPassword = async (req, res) => {
-  const { token, password } = req.body;
-
-  if (!token || !password) {
-    return res.status(400).json({ message: "Missing data" });
-  }
-
+export const verifyPasswordResetOtp = async (req, res) => {
   try {
-    const user = await User.findOne({
-      resetToken: token,
-      resetTokenExpire: { $gt: Date.now() },
+    const email = normalizeEmail(req.body.email);
+    const otp = req.body.otp?.toString().trim() || "";
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP are required" });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "No account found for this email" });
+    }
+
+    const isOtpExpired =
+      !user.passwordResetOtpExpire || user.passwordResetOtpExpire.getTime() < Date.now();
+    const isOtpValid =
+      !!user.passwordResetOtpHash && user.passwordResetOtpHash === hashValue(otp);
+
+    if (!isOtpValid || isOtpExpired) {
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+    }
+
+    const resetSessionToken = createResetSessionToken();
+    user.passwordResetSessionHash = hashValue(resetSessionToken);
+    user.passwordResetSessionExpire = new Date(Date.now() + RESET_SESSION_VALIDITY_MS);
+    user.passwordResetOtpHash = "";
+    user.passwordResetOtpExpire = null;
+    await user.save();
+
+    res.json({
+      message: "OTP verified. You can now set a new password.",
+      resetSessionToken,
     });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const resetSessionToken = req.body.resetSessionToken?.toString().trim() || "";
+    const password = req.body.password?.toString() || "";
+
+    if (!email || !resetSessionToken || !password) {
+      return res.status(400).json({ message: "Missing data" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(400).json({ message: "Invalid or expired token" });
+      return res.status(400).json({ message: "Invalid reset request" });
+    }
+
+    const isSessionExpired =
+      !user.passwordResetSessionExpire ||
+      user.passwordResetSessionExpire.getTime() < Date.now();
+    const isSessionValid =
+      !!user.passwordResetSessionHash &&
+      user.passwordResetSessionHash === hashValue(resetSessionToken);
+
+    if (!isSessionValid || isSessionExpired) {
+      return res.status(400).json({ message: "Your reset session has expired. Request a new OTP." });
     }
 
     user.password = password;
     user.resetToken = undefined;
     user.resetTokenExpire = undefined;
+    user.passwordResetOtpHash = "";
+    user.passwordResetOtpExpire = null;
+    user.passwordResetSessionHash = "";
+    user.passwordResetSessionExpire = null;
     await user.save();
 
     res.json({ message: "Password reset successful" });

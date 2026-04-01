@@ -66,6 +66,9 @@ export const getUserById = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
+    if (user.role === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only Super Admin can view this user" });
+    }
     res.json(user);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch user" });
@@ -87,12 +90,25 @@ export const createUser = async (req, res) => {
     }
 
     const userRole = role || "custom";
-    if (!customRoleId) {
-      return res.status(400).json({ message: "Role is required" });
+    if (userRole === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only Super Admin can assign this role" });
     }
-    const roleExists = await Role.findById(customRoleId).select("_id");
-    if (!roleExists) {
-      return res.status(400).json({ message: "Role not found" });
+
+    let resolvedRoleId = customRoleId || null;
+    if (userRole === "superadmin") {
+      const superadminRole = await Role.findOne({ key: "superadmin" }).select("_id");
+      if (!superadminRole) {
+        return res.status(400).json({ message: "Super Admin role not found" });
+      }
+      resolvedRoleId = superadminRole._id;
+    } else {
+      if (!resolvedRoleId) {
+        return res.status(400).json({ message: "Role is required" });
+      }
+      const roleExists = await Role.findById(resolvedRoleId).select("_id");
+      if (!roleExists) {
+        return res.status(400).json({ message: "Role not found" });
+      }
     }
 
     const user = await User.create({
@@ -100,7 +116,7 @@ export const createUser = async (req, res) => {
       email,
       password,
       role: userRole,
-      customRole: customRoleId,
+      customRole: resolvedRoleId,
     });
 
     res.status(201).json({
@@ -128,19 +144,35 @@ export const updateUser = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
+    if (user.role === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only Super Admin can update this user" });
+    }
 
     if (name) user.name = name;
     if (email) user.email = email;
     if (role !== undefined || customRoleId !== undefined) {
-      if (!customRoleId) {
-        return res.status(400).json({ message: "Role is required" });
+      if (role === "superadmin" && req.user.role !== "superadmin") {
+        return res.status(403).json({ message: "Only Super Admin can assign this role" });
       }
-      const roleExists = await Role.findById(customRoleId).select("_id");
-      if (!roleExists) {
-        return res.status(400).json({ message: "Role not found" });
+
+      let resolvedRoleId = customRoleId || null;
+      if (role === "superadmin") {
+        const superadminRole = await Role.findOne({ key: "superadmin" }).select("_id");
+        if (!superadminRole) {
+          return res.status(400).json({ message: "Super Admin role not found" });
+        }
+        resolvedRoleId = superadminRole._id;
+      } else {
+        if (!resolvedRoleId) {
+          return res.status(400).json({ message: "Role is required" });
+        }
+        const roleExists = await Role.findById(resolvedRoleId).select("_id");
+        if (!roleExists) {
+          return res.status(400).json({ message: "Role not found" });
+        }
       }
       user.role = role || "custom";
-      user.customRole = customRoleId;
+      user.customRole = resolvedRoleId;
     }
     if (isActive !== undefined) user.isActive = isActive;
 
@@ -174,6 +206,9 @@ export const deleteUser = async (req, res) => {
     // Don't allow deleting yourself
     if (user._id.toString() === req.user._id.toString()) {
       return res.status(400).json({ message: "Cannot delete your own account" });
+    }
+    if (user.role === "superadmin" && req.user.role !== "superadmin") {
+      return res.status(403).json({ message: "Only Super Admin can delete this user" });
     }
 
     await User.findByIdAndDelete(req.params.id);

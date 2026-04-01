@@ -1,8 +1,10 @@
 import Role from "../models/Role.js";
-import { PERMISSIONS } from "./roles.js";
+import { ALL_PERMISSIONS, PERMISSIONS } from "./roles.js";
 
 const USER_ROLE_KEY = "user";
 const USER_ROLE_NAME = "User";
+const SUPERADMIN_ROLE_KEY = "superadmin";
+const SUPERADMIN_ROLE_NAME = "Super Admin";
 const USER_BASE_PERMISSIONS = [
   PERMISSIONS.VIEW_DASHBOARD,
   PERMISSIONS.VIEW_MY_WORKSPACE,
@@ -22,6 +24,31 @@ const USER_BASE_PERMISSIONS = [
 ];
 
 export const ensureDefaultRoles = async () => {
+  const superadminRole = await Role.findOne({ key: SUPERADMIN_ROLE_KEY });
+
+  if (!superadminRole) {
+    await Role.create({
+      name: SUPERADMIN_ROLE_NAME,
+      key: SUPERADMIN_ROLE_KEY,
+      slug: SUPERADMIN_ROLE_KEY,
+      permissions: ALL_PERMISSIONS,
+      isSystem: true,
+    });
+  } else {
+    const currentPermissions = Array.isArray(superadminRole.permissions)
+      ? superadminRole.permissions
+      : [];
+    const mergedPermissions = Array.from(new Set([...currentPermissions, ...ALL_PERMISSIONS]));
+
+    superadminRole.name = SUPERADMIN_ROLE_NAME;
+    superadminRole.slug = SUPERADMIN_ROLE_KEY;
+    superadminRole.isSystem = true;
+    if (mergedPermissions.length !== currentPermissions.length) {
+      superadminRole.permissions = mergedPermissions;
+    }
+    await superadminRole.save();
+  }
+
   const existing = await Role.findOne({ key: USER_ROLE_KEY });
 
   if (!existing) {
@@ -30,7 +57,7 @@ export const ensureDefaultRoles = async () => {
       key: USER_ROLE_KEY,
       slug: USER_ROLE_KEY,
       permissions: USER_BASE_PERMISSIONS,
-      isSystem: false,
+      isSystem: true,
     });
     return;
   }
@@ -44,7 +71,7 @@ export const ensureDefaultRoles = async () => {
     if (!existing.slug) {
       existing.slug = existing.key;
     }
-    existing.isSystem = false;
+    existing.isSystem = true;
     await existing.save();
   }
 };

@@ -5,10 +5,6 @@ export const resolveUserPermissions = async (user) => {
   if (!user) return [];
 
   try {
-    if (user.role === "superadmin") {
-      return expandPermissions(["*"]);
-    }
-
     let roleDoc = null;
 
     if (user.customRole) {
@@ -19,6 +15,10 @@ export const resolveUserPermissions = async (user) => {
       }
     } else if (user.role) {
       roleDoc = await Role.findOne({ key: user.role }).select("permissions");
+    }
+
+    if (user.role === "superadmin" && !roleDoc) {
+      return expandPermissions(["*"]);
     }
 
     return expandPermissions(roleDoc?.permissions || []);
