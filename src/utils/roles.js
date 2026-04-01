@@ -54,6 +54,14 @@ export const PERMISSIONS = {
   FINANCE_PAYROLL_VIEW_ANNUAL: "finance.payroll.view.annual",
   FINANCE_PAYROLL_EDIT: "finance.payroll.edit",
   FINANCE_PAYSLIP_GENERATE: "finance.payslip.generate",
+  ASSET_PANEL_VIEW: "asset.panel.view",
+  ASSET_VIEW_ALL: "asset.view.all",
+  ASSET_VIEW_SUMMARY: "asset.view.summary",
+  ASSET_CREATE: "asset.create",
+  ASSET_EDIT: "asset.edit",
+  ASSET_ASSIGN: "asset.assign",
+  ASSET_CONDITION_UPDATE: "asset.condition.update",
+  ASSET_DELETE: "asset.delete",
 };
 
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);

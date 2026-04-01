@@ -15,6 +15,7 @@ import financeRoutes from "./routes/financeRoutes.js";
 import portfolioRoutes from "./routes/portfolioRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import leaveRoutes from "./routes/leaveRoutes.js";
+import assetRoutes from "./routes/assetRoutes.js";
 
 import { ensureDefaultRoles } from "./utils/ensureRoles.js";
 import { ensureEmployeeIds } from "./utils/ensureEmployeeIds.js";
@@ -22,7 +23,7 @@ import { startAttendanceScheduler } from "./utils/attendanceScheduler.js";
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 app.set("trust proxy", 1);
 
@@ -61,6 +62,7 @@ const startServer = async () => {
   app.use("/api", portfolioRoutes);
   app.use("/api", dashboardRoutes);
   app.use("/api", leaveRoutes);
+  app.use("/api", assetRoutes);
 
   app.get("/", (req, res) => {
     res.json({ message: "API running 🚀" });
