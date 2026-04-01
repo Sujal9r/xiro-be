@@ -1,6 +1,7 @@
 import User from "../models/User.js";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 import bcrypt from "bcryptjs";
 import generateToken from "../utils/generateToken.js";
 import { resolveUserPermissions } from "../utils/permissions.js";
@@ -15,11 +16,17 @@ const normalizeEmail = (value = "") => value.toString().trim().toLowerCase();
 const generateOtp = () => `${Math.floor(100000 + Math.random() * 900000)}`;
 const hashValue = (value = "") => crypto.createHash("sha256").update(value).digest("hex");
 const createResetSessionToken = () => crypto.randomBytes(32).toString("hex");
-const getPasswordResetTransporter = () =>
-  nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-  });
+const getPasswordResetTransporter = () => {
+  if (process.env.SENDGRID_API_KEY) {
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    return "sendgrid";
+  } else {
+    return nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    });
+  }
+};
 
 const buildOtpEmailHtml = ({ name, otp }) => `
   <div style="margin:0;padding:32px;background:#eef4ff;font-family:Arial,sans-serif;color:#0f172a;">
@@ -182,19 +189,30 @@ export const forgotPassword = async (req, res) => {
 
     const transporter = getPasswordResetTransporter();
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: user.email,
-      subject: "Xiro password reset OTP",
-      text: `Your Xiro password reset OTP is ${otp}. It will expire in 10 minutes.`,
-      html: buildOtpEmailHtml({ name: user.firstName || user.name, otp }),
-    });
+    if (transporter === "sendgrid") {
+      await sgMail.send({
+        from: process.env.EMAIL_FROM || "noreply@xiro.com",
+        to: user.email,
+        subject: "Xiro password reset OTP",
+        text: `Your Xiro password reset OTP is ${otp}. It will expire in 10 minutes.`,
+        html: buildOtpEmailHtml({ name: user.firstName || user.name, otp }),
+      });
+    } else {
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: user.email,
+        subject: "Xiro password reset OTP",
+        text: `Your Xiro password reset OTP is ${otp}. It will expire in 10 minutes.`,
+        html: buildOtpEmailHtml({ name: user.firstName || user.name, otp }),
+      });
+    }
 
     res.json({
       message: "We sent a 6-digit OTP to your email. Enter it to continue.",
     });
   } catch (error) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Forgot password error:", error);
+    res.status(500).json({ message: "Unable to send OTP. Please try again later." });
   }
 };
 
