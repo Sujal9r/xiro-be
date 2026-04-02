@@ -26,14 +26,34 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.set("trust proxy", 1);
 
+const configuredOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
 const allowedOrigins = [
   "https://xiro-fe.vercel.app",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-  process.env.FRONTEND_URL?.replace(/\/$/, ""),
+  ...configuredOrigins,
 ].filter(Boolean);
+
+const isAllowedOrigin = (origin) => {
+  const normalizedOrigin = origin.replace(/\/$/, "");
+
+  if (allowedOrigins.includes(normalizedOrigin)) {
+    return true;
+  }
+
+  try {
+    const { hostname } = new URL(normalizedOrigin);
+    return hostname === "xiro-fe.vercel.app" || hostname.endsWith(".vercel.app");
+  } catch {
+    return false;
+  }
+};
 
 app.use(
   cors({
@@ -44,7 +64,7 @@ app.use(
 
       console.log("Incoming Origin:", normalizedOrigin);
 
-      if (allowedOrigins.includes(normalizedOrigin)) {
+      if (isAllowedOrigin(normalizedOrigin)) {
         return callback(null, true);
       }
 

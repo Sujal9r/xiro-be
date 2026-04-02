@@ -38,13 +38,15 @@ export const ensureDefaultRoles = async () => {
     const currentPermissions = Array.isArray(superadminRole.permissions)
       ? superadminRole.permissions
       : [];
-    const mergedPermissions = Array.from(new Set([...currentPermissions, ...ALL_PERMISSIONS]));
-
+    const validPermissions = currentPermissions.filter((perm) =>
+      ALL_PERMISSIONS.includes(perm),
+    );
+    const shouldUpdatePermissions = validPermissions.length !== currentPermissions.length;
     superadminRole.name = SUPERADMIN_ROLE_NAME;
     superadminRole.slug = SUPERADMIN_ROLE_KEY;
     superadminRole.isSystem = true;
-    if (mergedPermissions.length !== currentPermissions.length) {
-      superadminRole.permissions = mergedPermissions;
+    if (shouldUpdatePermissions) {
+      superadminRole.permissions = validPermissions;
     }
     await superadminRole.save();
   }

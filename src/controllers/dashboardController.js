@@ -3,6 +3,7 @@ import Ticket from "../models/Ticket.js";
 import AttendanceLog from "../models/AttendanceLog.js";
 import LeaveRequest from "../models/LeaveRequest.js";
 import RegularizationRequest from "../models/RegularizationRequest.js";
+import Asset from "../models/Asset.js";
 import { resolveUserPermissions } from "../utils/permissions.js";
 import { PERMISSIONS } from "../utils/roles.js";
 import { getRegularizationBalanceForUser } from "../utils/regularization.js";
@@ -36,13 +37,47 @@ export const getDashboard = async (req, res) => {
     const canAdminOverview = permissions.includes(PERMISSIONS.VIEW_ADMIN_OVERVIEW);
 
     if (canAdminOverview) {
-      const [totalUsers, totalTickets, pendingTickets, startedTickets, completedTickets] =
-        await Promise.all([
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(todayStart);
+      todayEnd.setHours(23, 59, 59, 999);
+
+      const [
+        totalUsers,
+        activeUsers,
+        disabledUsers,
+        totalTickets,
+        pendingTickets,
+        startedTickets,
+        completedTickets,
+        checkedInUsersToday,
+        onLeaveToday,
+        pendingLeaveRequests,
+        pendingRegularizations,
+        totalAssets,
+        assignedAssets,
+        maintenanceAssets,
+      ] = await Promise.all([
           User.countDocuments(),
+          User.countDocuments({ isActive: true }),
+          User.countDocuments({ isActive: false }),
           Ticket.countDocuments(),
           Ticket.countDocuments({ status: "pending" }),
           Ticket.countDocuments({ status: "started" }),
           Ticket.countDocuments({ status: "completed" }),
+          AttendanceLog.distinct("user", {
+            date: { $gte: todayStart, $lte: todayEnd },
+          }).then((users) => users.length),
+          LeaveRequest.countDocuments({
+            status: "approved",
+            fromDate: { $lte: todayEnd },
+            toDate: { $gte: todayStart },
+          }),
+          LeaveRequest.countDocuments({ status: "pending" }),
+          RegularizationRequest.countDocuments({ status: "pending" }),
+          Asset.countDocuments(),
+          Asset.countDocuments({ status: "assigned" }),
+          Asset.countDocuments({ status: "maintenance" }),
         ]);
 
       const recentTickets = await Ticket.find()
@@ -54,10 +89,19 @@ export const getDashboard = async (req, res) => {
       response.admin = {
         stats: {
           totalUsers,
+          activeUsers,
+          disabledUsers,
           totalTickets,
           pendingTickets,
           startedTickets,
           completedTickets,
+          checkedInUsersToday,
+          onLeaveToday,
+          pendingLeaveRequests,
+          pendingRegularizations,
+          totalAssets,
+          assignedAssets,
+          maintenanceAssets,
         },
         recentTickets,
       };

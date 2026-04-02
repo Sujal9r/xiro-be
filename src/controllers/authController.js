@@ -16,16 +16,23 @@ const normalizeEmail = (value = "") => value.toString().trim().toLowerCase();
 const generateOtp = () => `${Math.floor(100000 + Math.random() * 900000)}`;
 const hashValue = (value = "") => crypto.createHash("sha256").update(value).digest("hex");
 const createResetSessionToken = () => crypto.randomBytes(32).toString("hex");
+
 const getPasswordResetTransporter = () => {
   if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
     return "sendgrid";
-  } else {
-    return nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    });
   }
+
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error(
+      "Password reset email is not configured. Set SENDGRID_API_KEY or EMAIL_USER and EMAIL_PASS."
+    );
+  }
+
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+  });
 };
 
 const buildOtpEmailHtml = ({ name, otp }) => `
